@@ -32,7 +32,7 @@ app.get('/api/test', (req, res) => {
     res.send('Servidor funcionando correctamente');
 });
 
-app.post('/api/sync-persons', async (req, res) => { // Corregido a app.post
+app.post('/api/sync-persons', async (req, res) => {
     const person = req.body;
 
     if (!person || typeof person.personID !== 'number') {
@@ -107,19 +107,31 @@ app.post('/api/delete-person', async (req, res) => {
         return res.status(400).json({ message: 'ID no proporcionado o inválido', status: 'error' });
     }
 
-    const query = 'DELETE FROM persons WHERE personID = ?';
-
     try {
         const start = Date.now();
-        const [results] = await pool.query(query, [personID]);
-        console.log(`Tiempo de consulta MySQL (Eliminación): ${Date.now() - start} ms`);
-        if (results.affectedRows > 0) {
+        // Iniciar transacción para asegurar consistencia
+        await pool.execute('START TRANSACTION');
+
+        // Eliminar de la tabla persons
+        const [personsResult] = await pool.query('DELETE FROM persons WHERE personID = ?', [personID]);
+        console.log(`Tiempo de consulta MySQL (Eliminación persons): ${Date.now() - start} ms`);
+
+        // Eliminar de la tabla face_images
+        const [faceImagesResult] = await pool.query('DELETE FROM face_images WHERE personID = ?', [personID]);
+        console.log(`Tiempo de consulta MySQL (Eliminación face_images): ${Date.now() - start} ms`);
+
+        // Confirmar transacción
+        await pool.execute('COMMIT');
+
+        if (personsResult.affectedRows > 0 || faceImagesResult.affectedRows > 0) {
             res.status(200).json({ message: 'Eliminación exitosa', status: 'success' });
         } else {
+            await pool.execute('ROLLBACK'); // Revertir si no se eliminó nada
             res.status(404).json({ message: 'Registro no encontrado', status: 'error' });
         }
     } catch (err) {
-        console.error('Error eliminando persona:', err.message);
+        await pool.execute('ROLLBACK'); // Revertir en caso de error
+        console.error('Error eliminando persona o imágenes:', err.message);
         res.status(500).json({ message: 'Error al eliminar el registro', status: 'error' });
     }
 });
