@@ -7,7 +7,6 @@ const app = express();
 app.use(bodyParser.json({ limit: '10mb' }));
 app.use(cors());
 
-// Configuración del pool de conexiones a MySQL (Railway)
 const pool = mysql.createPool({
     host: 'nozomi.proxy.rlwy.net',
     port: 14759,
@@ -19,7 +18,6 @@ const pool = mysql.createPool({
     queueLimit: 0
 });
 
-// Probar la conexión a MySQL al iniciar el servidor
 pool.getConnection((err, connection) => {
     if (err) {
         console.error('Error conectando a MySQL desde Railway:', err.message);
@@ -29,17 +27,14 @@ pool.getConnection((err, connection) => {
     }
 });
 
-// Endpoint para verificar si el servidor está funcionando correctamente
 app.get('/api/test', (req, res) => {
     res.send('Servidor funcionando correctamente');
 });
-
-// Endpoint para sincronizar personas
-app.post('/api/sync-persons', (req, res) => {
+aapp.post('/api/sync-persons', (req, res) => {
     const person = req.body;
 
     if (!person || typeof person.personID !== 'number') {
-        return res.status(400).json({ success: false, message: 'Datos de persona no válidos' });
+        return res.status(400).json({ message: 'Datos de persona no válidos', status: 'error' });
     }
 
     const { personID, personName, rut, apellidos, cargo, empresa, numImages, addTime, isSynced } = person;
@@ -63,18 +58,23 @@ app.post('/api/sync-persons', (req, res) => {
         console.log(`Tiempo de consulta MySQL (Persona): ${Date.now() - start} ms`);
         if (err) {
             console.error('Error insertando persona:', err.message);
-            return res.status(500).json({ success: false, message: 'Error en la sincronización', error: err.message });
+            return res.status(500).json({ message: 'Error en la sincronización', status: 'error' });
         }
-        res.status(200).json({ success: true, message: 'Persona sincronizada' });
+        // Usar el personID insertado (si MySQL lo generó) o el enviado
+        const assignedPersonID = results.insertId > 0 ? results.insertId : personID;
+        res.status(200).json({ 
+            message: 'Persona sincronizada', 
+            status: 'success', 
+            personID: assignedPersonID // Devolver el personID asignado
+        });
     });
 });
-
 // Endpoint para sincronizar imágenes faciales
 app.post('/api/sync-face-images', (req, res) => {
     const faceImage = req.body;
 
     if (!faceImage || typeof faceImage.recordID !== 'number') {
-        return res.status(400).json({ success: false, message: 'Datos de imagen facial no válidos' });
+        return res.status(400).json({ message: 'Datos de imagen facial no válidos', status: 'error' });
     }
 
     const { recordID, personID, personName, faceEmbedding, isSynced } = faceImage;
@@ -93,9 +93,34 @@ app.post('/api/sync-face-images', (req, res) => {
         console.log(`Tiempo de consulta MySQL (Imagen Facial): ${Date.now() - start} ms`);
         if (err) {
             console.error('Error insertando imagen facial:', err.message);
-            return res.status(500).json({ success: false, message: 'Error en la sincronización', error: err.message });
+            return res.status(500).json({ message: 'Error en la sincronización', status: 'error' });
         }
-        res.status(200).json({ success: true, message: 'Imagen sincronizada' });
+        res.status(200).json({ message: 'Imagen sincronizada', status: 'success' });
+    });
+});
+
+// Nuevo endpoint para eliminar personas
+app.post('/api/delete-person', (req, res) => {
+    const { personID } = req.body;
+
+    if (!personID || typeof personID !== 'number') {
+        return res.status(400).json({ message: 'ID no proporcionado o inválido', status: 'error' });
+    }
+
+    const query = 'DELETE FROM persons WHERE personID = ?';
+
+    const start = Date.now();
+    pool.query(query, [personID], (err, results) => {
+        console.log(`Tiempo de consulta MySQL (Eliminación): ${Date.now() - start} ms`);
+        if (err) {
+            console.error('Error eliminando persona:', err.message);
+            return res.status(500).json({ message: 'Error al eliminar el registro', status: 'error' });
+        }
+        if (results.affectedRows > 0) {
+            res.status(200).json({ message: 'Eliminación exitosa', status: 'success' });
+        } else {
+            res.status(404).json({ message: 'Registro no encontrado', status: 'error' });
+        }
     });
 });
 
