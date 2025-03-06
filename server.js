@@ -1,6 +1,6 @@
 const express = require('express');
 const bodyParser = require('body-parser');
-const mysql = require('mysql2');
+const mysql = require('mysql2/promise'); // Usar la versión promisificada
 const cors = require('cors');
 
 const app = express();
@@ -18,19 +18,21 @@ const pool = mysql.createPool({
     queueLimit: 0
 });
 
-pool.getConnection((err, connection) => {
-    if (err) {
-        console.error('Error conectando a MySQL desde Railway:', err.message);
-    } else {
+// Verificar conexión a la base de datos al iniciar
+pool.getConnection()
+    .then(connection => {
         console.log('Conexión exitosa a MySQL desde Railway');
         connection.release();
-    }
-});
+    })
+    .catch(err => {
+        console.error('Error conectando a MySQL desde Railway:', err.message);
+    });
 
 app.get('/api/test', (req, res) => {
     res.send('Servidor funcionando correctamente');
 });
-aapp.post('/api/sync-persons', (req, res) => {
+
+app.post('/api/sync-persons', async (req, res) => { // Corregido a app.post
     const person = req.body;
 
     if (!person || typeof person.personID !== 'number') {
@@ -53,24 +55,23 @@ aapp.post('/api/sync-persons', (req, res) => {
         isSynced = VALUES(isSynced)
     `;
 
-    const start = Date.now();
-    pool.query(query, [personID, personName, rut, apellidos, cargo, empresa, numImages, addTime, isSynced], (err, results) => {
+    try {
+        const start = Date.now();
+        const [results] = await pool.query(query, [personID, personName, rut, apellidos, cargo, empresa, numImages, addTime, isSynced]);
         console.log(`Tiempo de consulta MySQL (Persona): ${Date.now() - start} ms`);
-        if (err) {
-            console.error('Error insertando persona:', err.message);
-            return res.status(500).json({ message: 'Error en la sincronización', status: 'error' });
-        }
-        // Usar el personID insertado (si MySQL lo generó) o el enviado
         const assignedPersonID = results.insertId > 0 ? results.insertId : personID;
         res.status(200).json({ 
             message: 'Persona sincronizada', 
             status: 'success', 
-            personID: assignedPersonID // Devolver el personID asignado
+            personID: assignedPersonID 
         });
-    });
+    } catch (err) {
+        console.error('Error insertando persona:', err.message);
+        res.status(500).json({ message: 'Error en la sincronización', status: 'error' });
+    }
 });
-// Endpoint para sincronizar imágenes faciales
-app.post('/api/sync-face-images', (req, res) => {
+
+app.post('/api/sync-face-images', async (req, res) => {
     const faceImage = req.body;
 
     if (!faceImage || typeof faceImage.recordID !== 'number') {
@@ -88,19 +89,18 @@ app.post('/api/sync-face-images', (req, res) => {
         isSynced = VALUES(isSynced)
     `;
 
-    const start = Date.now();
-    pool.query(query, [recordID, personID, personName, JSON.stringify(faceEmbedding), isSynced], (err, results) => {
+    try {
+        const start = Date.now();
+        const [results] = await pool.query(query, [recordID, personID, personName, JSON.stringify(faceEmbedding), isSynced]);
         console.log(`Tiempo de consulta MySQL (Imagen Facial): ${Date.now() - start} ms`);
-        if (err) {
-            console.error('Error insertando imagen facial:', err.message);
-            return res.status(500).json({ message: 'Error en la sincronización', status: 'error' });
-        }
         res.status(200).json({ message: 'Imagen sincronizada', status: 'success' });
-    });
+    } catch (err) {
+        console.error('Error insertando imagen facial:', err.message);
+        res.status(500).json({ message: 'Error en la sincronización', status: 'error' });
+    }
 });
 
-// Nuevo endpoint para eliminar personas
-app.post('/api/delete-person', (req, res) => {
+app.post('/api/delete-person', async (req, res) => {
     const { personID } = req.body;
 
     if (!personID || typeof personID !== 'number') {
@@ -109,22 +109,21 @@ app.post('/api/delete-person', (req, res) => {
 
     const query = 'DELETE FROM persons WHERE personID = ?';
 
-    const start = Date.now();
-    pool.query(query, [personID], (err, results) => {
+    try {
+        const start = Date.now();
+        const [results] = await pool.query(query, [personID]);
         console.log(`Tiempo de consulta MySQL (Eliminación): ${Date.now() - start} ms`);
-        if (err) {
-            console.error('Error eliminando persona:', err.message);
-            return res.status(500).json({ message: 'Error al eliminar el registro', status: 'error' });
-        }
         if (results.affectedRows > 0) {
             res.status(200).json({ message: 'Eliminación exitosa', status: 'success' });
         } else {
             res.status(404).json({ message: 'Registro no encontrado', status: 'error' });
         }
-    });
+    } catch (err) {
+        console.error('Error eliminando persona:', err.message);
+        res.status(500).json({ message: 'Error al eliminar el registro', status: 'error' });
+    }
 });
 
-// Iniciar el servidor con el puerto de Railway
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, '0.0.0.0', () => {
     console.log(`Servidor escuchando en http://localhost:${PORT}`);
